@@ -1,7 +1,8 @@
 const mineflayer = require('mineflayer');
-const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
-const GoalFollow = goals.GoalFollow
+const { Movements, goals } = require('mineflayer-pathfinder');
+const GoalNear = goals.GoalNear;
 const collectBlock = require('mineflayer-collectblock').plugin;
+const pvp = require('mineflayer-pvp').plugin;
 
 
 // bot only listens to opped users
@@ -15,6 +16,7 @@ const bot = mineflayer.createBot({
 
 let mcData
 bot.loadPlugin(collectBlock)
+bot.loadPlugin(pvp)
 
 function chatListener(username, message) {
     console.log(`CHAT => <${username}> : ${message}`);
@@ -33,18 +35,65 @@ function processChat(message) {
         return
     }
 
-    if (msgArgs[1] == "collect") {
-        if (msgArgs.length != 4) {
-            bot.chat("Incorrect command usage. Use \"bot collect [amount] [item_name]\"");
-            return
-        }
-        chatBlockCollect(msgArgs[2], msgArgs[3]);
-    } else if (msgArgs[1] == "goto" && msgArgs.length == 3) {
-        gotoPlayer(msgArgs[2]);
+    switch (msgArgs[1]) {
+        case "collect":
+            try {
+                chatBlockCollect(msgArgs[2], msgArgs[3]);
+            } catch (err) {
+                bot.chat("Incorrect command usage. Use \"bot collect [amount] [item_name]\"");
+            }
+            break;
+
+        case "goto":
+            gotoPlayer(msgArgs[2]);
+            break;
+
+        case "cancel":
+            if (msgArgs[2] === "movement") {cancelMovement()}
+            break;
+
+        case "position":
+            giveCoords();
+            break;
+
+        case "craft":
+            craftItem(msgArgs[3], msgArgs[2]);
+            break;
+    }
+
+    // if (msgArgs[1] == "collect") {
+    //     if (msgArgs.length != 4) {
+    //         bot.chat("Incorrect command usage. Use \"bot collect [amount] [item_name]\"");
+    //         return
+    //     }
+    //     chatBlockCollect(msgArgs[2], msgArgs[3]);
+
+    // } else if (msgArgs[1] == "goto" && msgArgs.length == 3) {
+    //     gotoPlayer(msgArgs[2]);
+
+    // } else if (msgArgs[1] == "cancel" && msgArgs[2] == "movement") {
+    //     cancelMovement();
+
+    // } else if (msgArgs[1] == "position" && msgArgs.length == 2) {
+    //     giveCoords();
+    // }
+}
+
+function cancelMovement() {
+    if (bot.pathfinder.goal || bot.collectBlock.targets) {
+        bot.pathfinder.setGoal(null);
+        bot.collectBlock.collect([]);
+        bot.chat("movements cancelled");
+
+       
+    } else {
+        bot.chat("no movements were set.")
     }
 }
 
 function giveCoords() {
+    const position = bot.entity.position
+    bot.chat(`position: ${position.x.toFixed(0)}, ${position.y.toFixed(0)}, ${position.z.toFixed(0)}`)
 }
 
 function gotoPlayer(username) {
@@ -56,8 +105,49 @@ function gotoPlayer(username) {
     }
 
     bot.chat(`Walking to ${username}'s last position.`);
-    const goal = new GoalFollow(selectedPlayer.entity);
-    bot.pathfinder.setGoal(goal)
+    const coords = selectedPlayer.entity.position;
+    console.log(coords);
+    const goalNear = new GoalNear(coords.x, coords.y, coords.z, 3);
+    bot.pathfinder.goto(goalNear, (err, result) => {
+        if (err) {
+            console.log(err);
+        } else {
+            bot.chat("Arrived at location");
+        }
+    });
+}
+
+function passiveMeleeDefense() {
+    const filter = e => e.type === "mob" && e.position.distanceTo(bot.entity.position) < 6
+        && e.kind === "Hostile mobs";
+    const entity = bot.nearestEntity(filter);
+
+    if (entity) {
+        const sword = bot.inventory.items().find(item => item.name.includes("sword"));
+        if (sword) {bot.equip(sword, "hand")}
+        bot.attack(entity)
+    }
+}
+
+function craftItem(name, amount) {
+    const item = mcData.findItemOrBlockByName(name);
+
+    // find crafting table
+    const craftingTableID = mcData.blocksByName.crafting_table.id;
+    const craftingTable = bot.findBlock({matching: craftingTableID});
+
+    if (item) {
+        const recipe = bot.recipesFor(item.id, null, 1, craftingTable)[0];
+        
+        // attempt crafting recipe if it exists
+        if (recipe) {
+            try {
+                bot.craft(recipe, amount, craftingTable);
+            } catch (err) {
+                console.log(err);
+            }
+        } else {console.log("Recipe could not be retrieved.")};
+    } else {console.log("Item not found")};
 }
 
 function chatBlockCollect(amount, blockName) {
@@ -87,7 +177,6 @@ function chatBlockCollect(amount, blockName) {
 
             bot.collectBlock.collect(targets, err => {
                 if (err) {
-                    bot.chat(err.message);
                     console.log(err);
                 } else {
                     bot.chat("Finished collecting");
@@ -106,10 +195,11 @@ bot.once('spawn', () => {
     bot.pathfinder.setMovements(movements);
 
     bot.chat("hello serverrr");
+
+    bot.on("physicsTick", passiveMeleeDefense);
 });
 
 bot.on('chat', (username, message) => chatListener(username, message));
-  
 
 
 
