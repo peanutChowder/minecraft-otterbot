@@ -48,6 +48,10 @@ function processChat(message) {
             gotoPlayer(msgArgs[2]);
             break;
 
+        case "gotoblock":
+            gotoBlock(msgArgs[2], msgArgs[3]);
+            break;
+
         case "cancel":
             if (msgArgs[2] === "movement") {cancelMovement()}
             break;
@@ -57,26 +61,14 @@ function processChat(message) {
             break;
 
         case "craft":
-            craftItem(msgArgs[3], msgArgs[2]);
+            try {
+                const amount = parseInt(msgArgs[2]);
+                craftItem(msgArgs[3], amount);
+            } catch {
+                bot.chat("Incorrect usage. Use \"bot craft [amount] [item_name]\"");
+            } 
             break;
     }
-
-    // if (msgArgs[1] == "collect") {
-    //     if (msgArgs.length != 4) {
-    //         bot.chat("Incorrect command usage. Use \"bot collect [amount] [item_name]\"");
-    //         return
-    //     }
-    //     chatBlockCollect(msgArgs[2], msgArgs[3]);
-
-    // } else if (msgArgs[1] == "goto" && msgArgs.length == 3) {
-    //     gotoPlayer(msgArgs[2]);
-
-    // } else if (msgArgs[1] == "cancel" && msgArgs[2] == "movement") {
-    //     cancelMovement();
-
-    // } else if (msgArgs[1] == "position" && msgArgs.length == 2) {
-    //     giveCoords();
-    // }
 }
 
 function cancelMovement() {
@@ -107,7 +99,7 @@ function gotoPlayer(username) {
     bot.chat(`Walking to ${username}'s last position.`);
     const coords = selectedPlayer.entity.position;
     console.log(coords);
-    const goalNear = new GoalNear(coords.x, coords.y, coords.z, 3);
+    const goalNear = new GoalNear(coords.x, coords.y, coords.z, 1);
     bot.pathfinder.goto(goalNear, (err, result) => {
         if (err) {
             console.log(err);
@@ -132,6 +124,8 @@ function passiveMeleeDefense() {
 function craftItem(name, amount) {
     const item = mcData.findItemOrBlockByName(name);
 
+    console.log(item);
+
     // find crafting table
     const craftingTableID = mcData.blocksByName.crafting_table.id;
     const craftingTable = bot.findBlock({matching: craftingTableID});
@@ -142,16 +136,67 @@ function craftItem(name, amount) {
         // attempt crafting recipe if it exists
         if (recipe) {
             try {
-                bot.craft(recipe, amount, craftingTable);
+                bot.craft(recipe, amount, craftingTable, () => {bot.chat("done crafting")});
             } catch (err) {
                 console.log(err);
             }
-        } else {console.log("Recipe could not be retrieved.")};
-    } else {console.log("Item not found")};
+
+        } else {bot.chat("Do not have required materials.")};
+
+        // if recipe exists and requires a crafting table out of bounds,
+        // move to it or create a crafting table.
+        if (!recipe && !craftingTable) {
+            if (!gotoBlock("crafting_table", 50)) {
+                // TODO
+                bot.chat("Implement craft crafting table");
+            } else {
+                console.log("moving to crafting table")
+                bot.findBlock({matching: craftingTableID});
+                bot.once("goal_reached", () => craftItem(name, amount));
+                return;
+            }
+        }
+    } else {throw "Item not found."};
 }
 
-function chatBlockCollect(amount, blockName) {
-    const maxDistance = 500;
+/**
+ * Attemps to move within 1 block of the requested block given a distance radius
+ * Reports in chat if unable to meet the given criteria. 
+ * @param {[string]} blockName [requested block]
+ * @param {[number]} maxDistance [maximum distance of the block]
+ * @returns {[bool]} boolean of whether goto performed successfully 
+ */
+function gotoBlock(blockName,  maxDistance) {
+    const block = getBlockTargets(1, blockName, maxDistance);
+
+
+    if (!block) {
+        bot.chat(`${blockName} not found within ${maxDistance} blocks.`);
+        return false;
+    }
+    
+    const coords = block[0].position;
+
+    const goalNear = new GoalNear(coords.x, coords.y, coords.z, 1);
+    bot.pathfinder.goto(goalNear, (err, result) => {
+        if (err) {
+            console.log(err);
+        } else {
+            bot.chat("Arrived at location");
+            return true;
+        }
+    });
+    return true;
+}
+
+/**
+ * 
+ * @param {[number]} amount Amount of block searched for
+ * @param {[string]} blockName Name of block
+ * @param {[number]} maxDistance Maximum block distance from bot
+ * @returns {[array]} Array of block objects
+ */
+function getBlockTargets(amount, blockName, maxDistance) {
     const blockType = mcData.blocksByName[blockName];
     if (!blockType) {
         bot.chat("block not recognized");
@@ -175,16 +220,25 @@ function chatBlockCollect(amount, blockName) {
 
             bot.chat(`found ${targets.length} of ${blockName}`);
 
-            bot.collectBlock.collect(targets, err => {
-                if (err) {
-                    console.log(err);
-                } else {
-                    bot.chat("Finished collecting");
-                }
-            });
-
+            return targets
         }
+    }
+}
 
+function chatBlockCollect(amount, blockName) {
+    const maxDistance = 500;
+    const targets = getBlockTargets(amount, blockName, maxDistance);
+
+    if (!targets) {
+        return
+    } else {
+        bot.collectBlock.collect(targets, err => {
+            if (err) {
+                console.log(err);
+            } else {
+                bot.chat("Finished collecting");
+            }
+        });
     }
 }
 
@@ -196,15 +250,7 @@ bot.once('spawn', () => {
 
     bot.chat("hello serverrr");
 
-    bot.on("physicsTick", passiveMeleeDefense);
+    // bot.on("physicsTick", passiveMeleeDefense);
 });
 
 bot.on('chat', (username, message) => chatListener(username, message));
-
-
-
-
-
-
-
-
