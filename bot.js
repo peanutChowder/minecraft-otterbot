@@ -6,7 +6,7 @@ const pvp = require('mineflayer-pvp').plugin;
 
 
 // bot only listens to opped users
-const opUsernames = ["toesniffer2000"]
+const opUsernames = []
 
 const bot = mineflayer.createBot({
     port: parseInt(process.argv[2]),
